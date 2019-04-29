@@ -1,0 +1,145 @@
+##INITIATION ------------------------------------------------------------------------------------------------------------
+
+## Installations
+# install.packages("velox")
+# install.packages("remotes")
+# remotes::install_github("ranghetti/sen2r")
+
+## Dependencies
+# check_sen2r_deps()
+# install_sen2cor(force=T)
+# install_aria2(force=T)
+# install_wget(force=T)
+# sen2r:::check_gdal(force=TRUE)
+
+## Libraries needed
+library(raster)
+library(RStoolbox)
+library(devtools)
+library(rgdal)
+library(utils)
+library(roxygen2)
+library(velox)
+library(sen2r)
+require(sen2r)
+
+##DIRECTORY DEFINITIONS ------------------------------------------------------------------------------------------
+wd <- "D:\\R Project\\R"
+setwd(wd)
+dir <-  "D:\\R Project\\Data"
+dsn <-  "D:\\R Project\\Data\\water-polygons-split-4326"
+
+input <-  0
+prods <- 0
+scene_list <- list()
+prods <- list.files(dir, pattern = ".SAFE")
+for (i in 1:3)
+  input[i] <-  c(file.path(dir, prods[i], fsep = "\\"))
+
+#Extracting directory path and band list from the data
+for (i in 1:3){
+   input[i] <-  c(file.path(dir, prods[i], fsep = "\\"))
+   scene <- file.path(input[i], "GRANULE", fsep = "\\")
+   scene <- file.path(scene, list.files(scene), fsep = "\\")
+   scene_dir <- file.path(scene, list.files(scene, pattern = "IMG"), fsep = "\\")
+   scene_list <- dir(image)
+   if (i==1){
+     Scene1_list <- scene_list
+     Scene1_dir <- scene_dir
+   }
+   else if (i==2){
+     Scene2_list <- scene_list
+     Scene2_dir <- scene_dir
+   }
+   else{
+     Scene3_list <- scene_list
+     Scene3_dir <- scene_dir
+   }
+ }
+
+##PRODUCT EXTRACTION ---------------------------------------------------------------------------------------------
+#Analysis performed on first Sentinel Scene - 2016
+#Extract Band 2 (Blue)
+raster1 <- raster(file.path(Scene1_dir, Scene1_list[[2]]))
+#Extract Band 3 (Green)
+raster2 <- raster(file.path(Scene1_dir, Scene1_list[[3]]))
+#Extract Band 4 (Red)
+raster3 <- raster(file.path(Scene1_dir, Scene1_list[[4]]))
+
+#Resample Bands using Band 2 as a template
+raster2 <- resample(raster2, raster1, method = "ngb")
+raster3 <- resample(raster3, raster1, method = "ngb")
+
+#Raster stack of RGB Bands
+raster <- stack(raster3, raster2, raster1)
+#Save raster externally
+writeRaster(raster, "pre-processingRaster.tif")
+
+
+##PROCESSING ------------------------------------------------------------------------------------------------------
+#Estimating haze effects on bands below 800nm wavelength
+haze <- estimateHaze(raster, hazeBands = 1:3, darkProp = 0.01)
+
+#Applying simple Dark Object Subtraction
+haze_raster <- raster
+for (i in 1:3)
+  {
+  haze_raster[[i]] <- setValues(haze_raster[[i]], haze[i])
+}
+prod_dos <- raster - haze_raster
+
+#Masking out Land
+#!Takes an awful lot of time!
+AOI <- readOGR(dsn = dsn, layer = "water_polygons", verbose = T)
+AOI <- spTransform(AOI, CRS(proj4string(raster)))
+Egypt <- getData("GADM", country="EGY", level=2)
+AOI <- crop(AOI, Egypt)
+
+#plot(prod_dos)
+#plot(AOI,add=T)
+prod_processed <- mask(prod_dos, AOI, snap = "out")
+plot(prod_processed)
+
+#Externally saving processed product
+writeRaster(prod_processed, "post-processingRaster.tif")
+
+##WATER QUALITY PRODUCTS ------------------------------------------------------------------------------------------
+##!Products calculated from unmasked product!
+#Water turbidity
+turbidity <- (1030*prod_dos[[3]]^1.08)/7 + 0.5
+#Chlorophyll-a (biomass estimtion)
+chla <- exp(-0.335+0.01663*(log(prod_dos[[1]]/prod_dos[[3]])))
+plot(chla)
+plot(turbidity)
+
+##!Products calculated from masked product!
+turbidity <- (1030*prod_processed[[3]]^1.08)/7 + 0.5
+#Chlorophyll-a (biomass estimtion)
+chla <- exp(-0.335+0.01663*(log(prod_processed[[1]]/prod_processed[[3]])))
+plot(chla)
+plot(turbidity)
+
+
+######################################################################################################+#################
+# ##Atmospheric correction of Sentinel-2 L1C Products
+# sen2r()
+# 
+# prod_raster <-  0
+# prod_path.raster <- 0
+# prod_subset <-  0
+# prod_warp <- 0
+# haze <-  0
+# prod_proc <- 0
+# 
+# for (i in 1:3)
+#   input[i] <-  c(file.path(dir, prods[i], fsep = "\\"))
+# 
+#   prod_path.raster[1] <- s2_translate(input[1], outdir = wd, format = "GTiff", res = "10m")
+#   prod_path.raster[1] <- gsub("/", "\\\\", prod_path.raster[1])
+# 
+#   prod_mask <- mask(prod_raster[[1]], AOI)
+# 
+# 
+#   
+# #output <- sen2cor(l1c_prodlist = input, outdir = wd, proc_dir = wd, tmpdir = wd, rmtmp = F, parallel = T, overwrite = T, .log_output = "Done", .log_message = "Progress")
+# #output
